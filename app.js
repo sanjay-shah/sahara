@@ -2,11 +2,12 @@ var restify = require('restify');
 var mongojs = require('mongojs');
 var faker = require('faker');
 var request = require('request');
+var url = require("url");
 
 var ObjectId = mongojs.ObjectId;
 
 
-var db = mongojs('mongodb://127.0.0.1:3001/meteor', ['apis']);
+var db = mongojs('mongodb://127.0.0.1:3001/meteor', ['apis', 'snaps']);
 
 var Logger = require('bunyan');
 var log = new Logger({
@@ -50,8 +51,8 @@ server.pre(restify.pre.userAgentConnection());
 server.use(restify.queryParser());
 
 var rateLimit = restify.throttle({
-  burst: 15,
-  rate: 0.25,
+  burst: 100,
+  rate: 50,
   ip: true
 });
 
@@ -112,7 +113,10 @@ server.get({
     return next();
   });
 
-server.get('/your-api/:id',
+server.get({
+    name: 'facebook',
+    path: '/facebook/:id'
+  },
   rateLimit,
   function id(req, res, next) {
     ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
@@ -123,7 +127,20 @@ server.get('/your-api/:id',
     if (req.params.id == 'sample') {
       sample = {};
       sample.status = 200;
-      sample.body = faker.Helpers.userCard();
+      sample.body = {};
+      sample.body.first_name = faker.Name.firstNameFemale();
+      sample.body.last_name = faker.Name.lastName();
+      sample.body.id = "" + faker.random.number(99999999999999);
+    	sample.body.gender = "female";
+      sample.body.username = faker.Internet.userName();
+    	//sample.body.link = "http://" + req.headers.host + server.router.render('your-api') + "/" +sample.body.username;
+      
+      sample.body.link = "http://" + faker.Internet.domainName() + "/" +sample.body.username;
+    	sample.body.locale = "en_US";
+    	sample.body.name = sample.body.first_name + " " + sample.body.last_name;
+    	
+      
+      //sample.body = JSON.stringify(samplebody);
       sample.headers = {
         "Content-type": "application/json; charset=utf-8",
         "randomHeader": randomNumber
@@ -131,22 +148,24 @@ server.get('/your-api/:id',
       res.writeHead(sample.status, sample.headers);
       res.end(JSON.stringify(sample.body));
       //console.log(JSON.stringify(sample));
-      db.apis.save(sample);
+      //db.apis.save(sample);
     } else {
-      db.apis.findOne({
-        _id: ObjectId(req.params.id)
+      db.snaps.findOne({
+        username: req.params.id
       }, function(err, data) {
-        res.writeHead(data.status, data.headers);
-        res.end(JSON.stringify(data.body));
+        res.writeHead(200, {
+        "Content-type": "application/json; charset=utf-8"
+      });
+        res.end(JSON.stringify(data));
       });
     }
     return next();
   });
 
-server.head('/your-api/:name', send);
-server.del('your-api/:id', function remove(req, res, next) {
+server.head('/facebook/:fbusername', send);
+server.del('facebook/:fbusername', function remove(req, res, next) {
   db.apis.remove({
-    _id: ObjectId(req.params.id)
+    username: req.params.fbusername
   }, function(err, data) {
     res.send(204);
   });
@@ -160,27 +179,24 @@ server.get('/snap/api/:snapurl',
     snapurl = req.params.snapurl;
     req.log.debug('snapurl is "%s"', snapurl);   
     
-    ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    request.get(snapurl, 
+      function optionalCallback (err, httpResponse, body) {
+      if (err) {
+      return console.error('snapaping falied:', err);
+    }
+    console.log('snapapi successful!  Server responded with:', body);
+    //mylink = url.parse(JSON.parse(body.link));
+    bodyjson = JSON.parse(body);
+    req.log.debug('mylink is "%s"', bodyjson.link); 
+    mylinkPart = url.parse(bodyjson.link);
+    mylinkPart.protocol = "http";
+    mylinkPart.host = req.headers.host;
+    mylinkPart.pathname = "/facebook" + mylinkPart.path;
+    bodyjson.link = url.format(mylinkPart);
+    req.log.debug('mylinkPart.href is "%s"', bodyjson.link);
+    db.snaps.save(bodyjson);
+}).pipe(res);
     
-    request(snapurl, function (error, response, body) {
-      if (!error && response.statusCode == 200) {
-        console.log(body) // Print the google web page.
-      }
-    });
-    /*
-    var client = restify.createJsonClient({
-      url: 'http://localhost:8080/',
-      version: '*',
-      log: snapapilog
-    });
-    req.log.debug('client is "%s"', JSON.stringify(client)); 
-    console.log("here->>");
-    //client.basicAuth('$login', '$password');
-    client.get(url, function(err, outboundreq, outboundres, obj) {
-    //assert.ifError(err);
-    console.log(JSON.stringify(obj, null, 2));
-    res.send(200, obj);
-  });*/
     return next();
   });
   
